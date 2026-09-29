@@ -1,0 +1,110 @@
+*vimprocess.txt*  Manage background processes, tmux-style
+
+==============================================================================
+CONTENTS                                                *vimprocess-contents*
+
+    1. Introduction ........................ |vimprocess-introduction|
+    2. Usage ............................... |vimprocess-usage|
+    3. Commands ............................ |vimprocess-commands|
+    4. List buffer ......................... |vimprocess-list|
+    5. Configuration ....................... |vimprocess-configuration|
+    6. License ............................. |vimprocess-license|
+
+==============================================================================
+1. INTRODUCTION                                       *vimprocess-introduction*
+
+Vimprocess manages background processes from Vim: start them by name,
+watch their output in buffers, send them stdin, kill or restart them.
+Think tmux sessions without the terminal multiplexer: one window per
+process log plus a list buffer to drive them all.
+
+Written in vim9script on top of Vim's |job| control. No server, no
+dependencies: processes live as long as Vim does.
+
+==============================================================================
+2. USAGE                                                     *vimprocess-usage*
+
+Start something in the background: >
+
+    :ProcessStart sleep 30
+    :ProcessStart make -j8 build
+
+The process gets an auto-name (sleep, make, ...) and logs to a hidden
+buffer. Open the list, pick a process, watch or drive it: >
+
+    :ProcessList
+    :ProcessShow make
+    :ProcessSend make q
+    :ProcessKill make
+    :ProcessRestart make
+
+Names complete with Tab, and unique prefixes work everywhere
+(:ProcessShow ma does the job if only make matches).
+
+==============================================================================
+3. COMMANDS                                               *vimprocess-commands*
+
+:ProcessStart {cmd} [args...]
+                Start a command in the background. The name comes from
+                the command itself (make, make-1, ...). Running starts
+                in Vim's current directory with Vim's environment.
+
+:ProcessList    Open the process list (or jump to it).
+
+:ProcessShow {name}
+                Open the process output buffer in a split (or jump to
+                it if already visible).
+
+:ProcessSend {name} {text...}
+                Send a line to the process stdin.
+
+:ProcessKill [!] {name}
+                SIGTERM the process (:ProcessKill! uses SIGKILL).
+
+:ProcessInterrupt {name}
+                SIGINT the process (like C-c).
+
+:ProcessRestart {name}
+                Stop (if running) and start again, keeping the log with
+                a "restarted" marker.
+
+:ProcessForget {name}
+                Drop a finished process (refuses while running).
+
+:ProcessAdopt {pid} [name]
+                Track a foreign process: liveness in the list and kill
+                work, but there is no output capture or stdin (the OS
+                cannot rewire another process's file descriptors).
+
+==============================================================================
+4. LIST BUFFER                                             *vimprocess-list*
+
+The list shows name, status, exit code and command per process:
+
+    q             Close the list.
+    r             Refresh.
+    <CR>          Show the output of the process under the cursor.
+    K             Kill it (SIGTERM).
+    R             Restart it.
+    D             Forget it.
+
+==============================================================================
+5. CONFIGURATION                                     *vimprocess-configuration*
+
+g:vimprocess_max_lines    Default: 5000
+    Scrollback cap per output buffer. Oldest lines are dropped beyond
+    it, tmux-style. Set before processes produce output: >
+        let g:vimprocess_max_lines = 10000
+
+g:vimprocess_stoponexit   Default: 'term'
+    What happens to jobs on :qa!. 'term' (or kill/hup/int/quit) ends
+    them; '' leaves them running, orphaned. Re-capture survivors with
+    :ProcessAdopt (by PID: output history does not survive).
+
+==============================================================================
+6. LICENSE                                                 *vimprocess-license*
+
+MIT License
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
