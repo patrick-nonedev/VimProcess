@@ -44,32 +44,46 @@ Names complete with Tab, and unique prefixes work everywhere
 ==============================================================================
 3. COMMANDS                                               *vimprocess-commands*
 
-:ProcessStart {cmd} [args...]
+:ProcessStart [++cwd={dir}] [++env=NAME=VAL]... {cmd} [args...]
                 Start a command in the background. The name comes from
-                the command itself (make, make-1, ...). Running starts
-                in Vim's current directory with Vim's environment.
+                the command itself (make, make-1, ...). The directory
+                defaults to Vim's current one and is captured at start;
+                ++env= sets variables only for this process. Vim's own
+                environment and directory are never touched, and restart
+                reuses the stored command, directory and environment.
 
 :ProcessList    Open the process list (or jump to it).
 
-:ProcessShow {name}
+:ProcessShow [name]
                 Open the process output buffer in a split (or jump to
-                it if already visible).
+                it if already visible). Empty name means the process
+                owning the current buffer.
 
 :ProcessSend {name} {text...}
                 Send a line to the process stdin.
 
-:ProcessKill [!] {name}
+:ProcessHere {show|send|kill|interrupt|restart|forget|info} [args...]
+                Act on the process owning the current buffer, without
+                naming it. Wiping an output buffer never kills its
+                process; :ProcessShow recreates the log view.
+
+:ProcessKill [!] [name]
                 SIGTERM the process (:ProcessKill! uses SIGKILL).
 
-:ProcessInterrupt {name}
+:ProcessInterrupt [name]
                 SIGINT the process (like C-c).
 
-:ProcessRestart {name}
-                Stop (if running) and start again, keeping the log with
-                a "restarted" marker.
+:ProcessRestart [name]
+                Stop (if running) and start again with the stored
+                command, directory and environment, keeping the log
+                with a "restarted" marker.
 
-:ProcessForget {name}
+:ProcessForget [name]
                 Drop a finished process (refuses while running).
+
+:ProcessInfo [name]
+                Show command, directory, environment overrides, status
+                and buffer of a process.
 
 :ProcessAdopt {pid} [name]
                 Track a foreign process: liveness in the list and kill

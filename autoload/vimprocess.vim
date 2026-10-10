@@ -45,6 +45,8 @@ def StartJob(p: dict<any>): void
       err_io: 'pipe',
       out_mode: 'raw',
       err_mode: 'raw',
+      cwd: p.cwd,
+      env: p.env,
       stoponexit: get(g:, 'vimprocess_stoponexit', 'term'),
       out_cb: (ch, msg) => ProcessOut(name, run, msg),
       err_cb: (ch, msg) => ProcessOut(name, run, msg),
@@ -107,6 +109,26 @@ def Resolve(raw: string): dict<any>
   return {}
 enddef
 
+# Buffer-first: an empty name means the process owning the current buffer.
+def CurrentName(): string
+  return getbufvar(bufnr(''), 'vimprocess_name', '')
+enddef
+
+def ResolveHere(raw: string): dict<any>
+  if raw != ''
+    return Resolve(raw)
+  endif
+  var n = CurrentName()
+  if n == '' || !has_key(procs, n)
+    return {}
+  endif
+  return procs[n]
+enddef
+
+def ProcLabel(raw: string): string
+  return raw == '' ? 'current buffer' : raw
+enddef
+
 # External PID alive check (no output capture possible, OS limitation).
 def AlivePid(pid: string): bool
   if isdirectory('/proc')
@@ -133,36 +155,78 @@ def EnsureBuf(p: dict<any>): void
   setbufvar(p.buf, '&bufhidden', 'hide')
   setbufvar(p.buf, '&swapfile', 0)
   setbufvar(p.buf, '&buflisted', 0)
+  setbufvar(p.buf, 'vimprocess_name', p.name)
+enddef
+
+# Leading ++cwd= / ++env= options are consumed before the command.
+# Values are single tokens (no spaces); complex environments should be
+# provided by an explicit loader command instead of inline values.
+def ParseSpawnOpts(args: list<string>): dict<any>
+  var cwd = ''
+  var env: dict<string> = {}
+  var i = 0
+  while i < len(args) && strpart(args[i], 0, 2) ==# '++'
+    var opt = strpart(args[i], 2)
+    if strpart(opt, 0, 4) ==# 'cwd='
+      cwd = strpart(opt, 4)
+    elseif strpart(opt, 0, 4) ==# 'env='
+      var rest = strpart(opt, 4)
+      var eq = stridx(rest, '=')
+      if eq <= 0
+        return {cwd: '', env: {}, cmd: [], err: 'bad ++env (want ++env=NAME=VALUE): ' .. args[i]}
+      endif
+      var ename = strpart(rest, 0, eq)
+      if ename !~# '^[A-Za-z_][A-Za-z0-9_]*$'
+        return {cwd: '', env: {}, cmd: [], err: 'bad env name: ' .. ename}
+      endif
+      env[ename] = strpart(rest, eq + 1)
+    else
+      return {cwd: '', env: {}, cmd: [], err: 'bad option: ' .. args[i]}
+    endif
+    i += 1
+  endwhile
+  return {cwd: cwd, env: env, cmd: args[i :], err: ''}
 enddef
 
 export def Start(...args: list<string>): void
-  if empty(args)
-    echoerr '[vimprocess] usage: ProcessStart {cmd} [args...]'
+  var opts = ParseSpawnOpts(args)
+  if opts.err != ''
+    echoerr '[vimprocess] ' .. opts.err
     return
   endif
-  if !executable(args[0])
-    echoerr '[vimprocess] not executable: ' .. args[0]
+  var cmd: list<string> = opts.cmd
+  if empty(cmd)
+    echoerr '[vimprocess] usage: ProcessStart [++cwd={dir}] [++env=NAME=VAL] {cmd} [args...]'
+    return
+  endif
+  if !executable(cmd[0])
+    echoerr '[vimprocess] not executable: ' .. cmd[0]
+    return
+  endif
+  var cwd = opts.cwd == '' ? getcwd() : opts.cwd
+  if !isdirectory(cwd)
+    echoerr '[vimprocess] not a directory: ' .. cwd
     return
   endif
   if index(['term', 'kill', 'hup', 'int', 'quit', ''], get(g:, 'vimprocess_stoponexit', 'term')) < 0
     echoerr '[vimprocess] bad g:vimprocess_stoponexit: ' .. g:vimprocess_stoponexit
     return
   endif
-  var name = UniqueName(fnamemodify(args[0], ':t'))
-  var p: dict<any> = {name: name, cmd: args, buf: -1, job: null_job,
-    status: 'starting', code: -1, run: 0, partial: ''}
+  var name = UniqueName(fnamemodify(cmd[0], ':t'))
+  var p: dict<any> = {name: name, cmd: cmd, cwd: cwd, env: opts.env,
+    buf: -1, job: null_job, status: 'starting', code: -1, run: 0, partial: ''}
   procs[name] = p
   EnsureBuf(p)
-  setbufline(p.buf, 1, ['[vimprocess] ' .. name .. ': ' .. join(args)])
+  setbufline(p.buf, 1, ['[vimprocess] ' .. name .. ': ' .. join(cmd) .. ' (cwd ' .. cwd .. ')'])
   StartJob(p)
   DoRefreshList()
   echo '[vimprocess] started ' .. name
 enddef
 
 export def Kill(raw: string, force: number): void
-  var p = Resolve(raw)
+  var p = ResolveHere(raw)
   if empty(p)
-    echoerr '[vimprocess] no such process (or ambiguous): ' .. raw
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
     return
   endif
   if !IsRunning(p)
@@ -178,9 +242,9 @@ export def Kill(raw: string, force: number): void
 enddef
 
 export def Interrupt(raw: string): void
-  var p = Resolve(raw)
+  var p = ResolveHere(raw)
   if empty(p)
-    echoerr '[vimprocess] no such process (or ambiguous): ' .. raw
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
     return
   endif
   if !IsRunning(p)
@@ -195,9 +259,9 @@ export def Interrupt(raw: string): void
 enddef
 
 export def Restart(raw: string): void
-  var p = Resolve(raw)
+  var p = ResolveHere(raw)
   if empty(p)
-    echoerr '[vimprocess] no such process (or ambiguous): ' .. raw
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
     return
   endif
   if has_key(p, 'pid')
@@ -215,9 +279,9 @@ export def Restart(raw: string): void
 enddef
 
 export def Forget(raw: string): void
-  var p = Resolve(raw)
+  var p = ResolveHere(raw)
   if empty(p)
-    echoerr '[vimprocess] no such process (or ambiguous): ' .. raw
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
     return
   endif
   if !has_key(p, 'pid') && IsRunning(p)
@@ -285,9 +349,9 @@ export def Send(...args: list<string>): void
 enddef
 
 export def Show(raw: string): void
-  var p = Resolve(raw)
+  var p = ResolveHere(raw)
   if empty(p)
-    echoerr '[vimprocess] no such process (or ambiguous): ' .. raw
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
     return
   endif
   EnsureBuf(p)
@@ -380,6 +444,100 @@ export def ForgetUnderCursor(): void
   if name != ''
     Forget(name)
   endif
+enddef
+
+export def Info(raw: string): void
+  var p = ResolveHere(raw)
+  if empty(p)
+    echoerr '[vimprocess] no such process (or ambiguous): ' .. ProcLabel(raw)
+    return
+  endif
+  if has_key(p, 'pid')
+    echo '[vimprocess] ' .. p.name .. ': external PID ' .. p.pid .. ', ' .. (IsRunning(p) ? 'running' : 'exited')
+    return
+  endif
+  echo '[vimprocess] ' .. p.name .. ': ' .. (IsRunning(p) ? 'running' : p.status) .. ', cmd ' .. join(p.cmd) .. ', cwd ' .. p.cwd .. ', env ' .. string(p.env) .. ', buf ' .. p.buf
+enddef
+
+def SendHere(text: string): void
+  var p = ResolveHere('')
+  if empty(p)
+    echoerr '[vimprocess] no process owns the current buffer'
+    return
+  endif
+  if has_key(p, 'pid')
+    echoerr '[vimprocess] no stdin on external processes: ' .. p.name
+    return
+  endif
+  if !IsRunning(p)
+    echoerr '[vimprocess] not running: ' .. p.name
+    return
+  endif
+  try
+    ch_sendraw(p.job, text .. "\n")
+  catch
+    echoerr '[vimprocess] send failed: ' .. p.name
+  endtry
+enddef
+
+# Buffer-first dispatcher for the process owning the current buffer.
+export def Here(force: number, ...args: list<string>): void
+  if empty(args)
+    echoerr '[vimprocess] usage: ProcessHere {show|send|kill|interrupt|restart|forget|info} [args...]'
+    return
+  endif
+  var act = args[0]
+  var rest = args[1 :]
+  var name = len(rest) > 0 ? rest[0] : ''
+  if act ==# 'show'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere show [name]'
+      return
+    endif
+    Show(name)
+  elseif act ==# 'send'
+    if empty(rest)
+      echoerr '[vimprocess] usage: ProcessHere send {text...}'
+      return
+    endif
+    SendHere(join(rest, ' '))
+  elseif act ==# 'kill'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere kill [name]'
+      return
+    endif
+    Kill(name, force)
+  elseif act ==# 'interrupt'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere interrupt [name]'
+      return
+    endif
+    Interrupt(name)
+  elseif act ==# 'restart'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere restart [name]'
+      return
+    endif
+    Restart(name)
+  elseif act ==# 'forget'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere forget [name]'
+      return
+    endif
+    Forget(name)
+  elseif act ==# 'info'
+    if len(rest) > 1
+      echoerr '[vimprocess] usage: ProcessHere info [name]'
+      return
+    endif
+    Info(name)
+  else
+    echoerr '[vimprocess] bad action: ' .. act
+  endif
+enddef
+
+export def CompleteHereActions(lead: string, cmdline: string, pos: number): list<string>
+  return filter(['show', 'send', 'kill', 'interrupt', 'restart', 'forget', 'info'], (_, v) => v =~# '^\V' .. escape(lead, '\'))
 enddef
 
 export def CompleteNames(lead: string, cmdline: string, pos: number): list<string>

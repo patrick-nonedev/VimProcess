@@ -24,6 +24,7 @@ Copy the `vimprocess` directory to `~/.vim/pack/vimprocess/start/`
 ```vim
 :ProcessStart sleep 30
 :ProcessStart make -j8 build
+:ProcessStart ++cwd=/tmp ++env=FOO=bar make -j8 build
 :ProcessList
 :ProcessShow make
 :ProcessSend make q
@@ -34,6 +35,33 @@ Copy the `vimprocess` directory to `~/.vim/pack/vimprocess/start/`
 Names complete with Tab, and unique prefixes work (`:ProcessShow ma`
 if only `make` matches). In `:ProcessList`: `q` closes, `r` refreshes,
 `<CR>` shows output, `K` kills, `R` restarts, `D` forgets.
+
+Each process owns exactly one output buffer (`b:vimprocess_name` says
+which), and spawn options are per-process: `++cwd=` sets the working
+directory captured at start, `++env=NAME=VAL` sets variables only for
+that process. Vim's own environment and directory are never touched,
+and `:ProcessRestart` reuses the stored command, directory and
+environment instead of Vim's current ones.
+
+## Buffer-first actions
+
+From inside a process output buffer, act without naming it:
+
+```vim
+:ProcessHere show
+:ProcessHere send q
+:ProcessHere kill
+:ProcessHere interrupt
+:ProcessHere restart
+:ProcessHere forget
+:ProcessHere info
+```
+
+`ProcessShow`, `ProcessKill`, `ProcessInterrupt`, `ProcessRestart`,
+`ProcessForget` and `ProcessInfo` also accept an empty name, which
+means the process owning the current buffer. Wiping an output buffer
+never kills its process; `:ProcessShow` recreates the log view (output
+produced while no buffer existed is dropped).
 
 ## Adopting foreign processes
 
